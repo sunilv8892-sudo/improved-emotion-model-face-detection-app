@@ -1,0 +1,44 @@
+Yes, absolutely! This framework is model-agnostic and will work with any:
+
+1. YOLO Model Swap (Primary Detection)
+Replace model.tflite and labels.txt with:
+
+Face detection → Person detection
+Medical prescription detection
+Bird detection
+Vehicle detection
+Any YOLOv8 trained model exported to .tflite
+2. Classifier Model Swap (Secondary Classification)
+Replace second_model.tflite and second_labels.txt with:
+
+Emotion → Handwriting/text recognition
+Bird species classifier
+Butterfly species classifier
+Medicine type classifier
+Disease classification from X-rays
+How to Swap Models:
+File	Purpose	Format
+model.tflite	YOLO detection model	YOLOv8 TFLite
+labels.txt	YOLO class names	One label per line
+second_model.tflite	Classifier model	TFLite (224x224 input typical)
+second_labels.txt	Classifier labels	One label per line
+Example Use Cases:
+Use Case	YOLO Model	Classifier Model
+Current	Face detector	Emotion classifier
+Medical	Prescription/pill detector	Medicine name classifier
+Wildlife	Bird detector	Bird species classifier
+Entomology	Insect detector	Butterfly/moth species
+Agriculture	Plant/leaf detector	Disease classifier
+Retail	Product detector	Brand/category classifier
+Key Points:
+Input size auto-detection - The code reads classifier input size from the model automatically:
+
+
+final inputShape = classifierInterpreter!.getInputTensor(0).shape;classifierInputSize = inputShape[1]; // Auto-detects 224, 128, etc.
+Handles both quantized & float models - Works with uint8 or float32 TFLite models
+
+Label format flexible - Supports both:
+
+Happy (plain)
+0 Happy (indexed)
+Just drop in your trained models and update labels - the framework handles the rest! 🎯
