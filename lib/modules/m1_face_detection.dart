@@ -6,14 +6,25 @@ import 'package:image/image.dart' as img;
 
 /// M1: Face Detection Module using MediaPipe
 /// Detects faces in images with high accuracy and speed
+///
+/// Singleton – heavyweight ML Kit resources are allocated once and reused
+/// across screen lifecycles to prevent native memory exhaustion during
+/// rapid enroll→home→enroll cycles.
 class FaceDetectionModule {
   static const String modelName = 'MediaPipe Face Detection';
   static const double minDetectionConfidence = 0.5;
 
-  FaceDetector? _faceDetector;
+  // ── Singleton ──
+  static final FaceDetectionModule _instance = FaceDetectionModule._internal();
+  factory FaceDetectionModule() => _instance;
+  FaceDetectionModule._internal();
 
-  /// Initialize MediaPipe face detector
+  FaceDetector? _faceDetector;
+  bool _isInitialized = false;
+
+  /// Initialize MediaPipe face detector (idempotent – safe to call repeatedly)
   Future<void> initialize() async {
+    if (_isInitialized && _faceDetector != null) return;
     // ignore: deprecated_member_use
     _faceDetector = GoogleMlKit.vision.faceDetector(
       FaceDetectorOptions(
@@ -25,6 +36,7 @@ class FaceDetectionModule {
         performanceMode: FaceDetectorMode.fast,
       ),
     );
+    _isInitialized = true;
   }
 
   /// Detect faces in image
@@ -100,10 +112,13 @@ class FaceDetectionModule {
     return true;
   }
 
-  /// Dispose resources
+  /// Dispose resources.
+  /// NOTE: As a singleton the detector is normally kept alive for the entire
+  /// app session. Call this only on true app shutdown if needed.
   void dispose() {
     _faceDetector?.close();
     _faceDetector = null;
+    _isInitialized = false;
   }
 }
 

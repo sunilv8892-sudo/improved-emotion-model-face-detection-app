@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
@@ -77,10 +79,11 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
 
   @override
   void dispose() {
+    _autoCapturing = false; // stop capture loop before anything else
     _disableBrightnessBoost();
     _controller?.dispose();
-    _faceEmbedder.dispose();
-    _faceDetector.dispose();
+    // NOTE: _faceDetector and _faceEmbedder are app-scoped singletons;
+    // do NOT dispose them here — they are reused across screen instances.
     _nameController.dispose();
     _rollController.dispose();
     _classController.dispose();
@@ -161,7 +164,7 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
       await _controller?.dispose();
       _controller = CameraController(
         camera,
-        ResolutionPreset.high,
+        ResolutionPreset.medium, // medium saves memory during rapid enrollments
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.yuv420,
       );
@@ -263,6 +266,10 @@ class _EnrollmentScreenState extends State<EnrollmentScreen> {
     try {
       final image = await _controller!.takePicture();
       final bytes = await image.readAsBytes();
+
+      // Delete the temporary picture file immediately to free disk/memory
+      try { await File(image.path).delete(); } catch (_) {}
+
       final rawImage = img.decodeImage(bytes);
 
       if (rawImage != null) {

@@ -5,10 +5,18 @@ import 'package:image/image.dart' as img;
 /// M2: Face Embedding Module using FaceNet (128D)
 /// Converts cropped face images into numerical vectors (embeddings)
 /// Using a 128-dimensional FaceNet TFLite model
+///
+/// Singleton – the TFLite interpreter is allocated once and reused across
+/// screen lifecycles to prevent native memory exhaustion.
 class FaceEmbeddingModule {
   static const String modelName = 'FaceNet-128';
   static const int embeddingDimension = 128; // FaceNet outputs 128D vectors
   static const String modelAssetPath = 'assets/models/embedding_model.tflite';
+
+  // ── Singleton ──
+  static final FaceEmbeddingModule _instance = FaceEmbeddingModule._internal();
+  factory FaceEmbeddingModule() => _instance;
+  FaceEmbeddingModule._internal();
 
   Interpreter? _interpreter;
   bool _isInitialized = false;

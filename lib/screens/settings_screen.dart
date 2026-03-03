@@ -749,7 +749,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const Divider(height: 1, color: AppConstants.dividerColor),
                     _infoRow('Inference', 'XNNPack CPU, 4 threads'),
                     const Divider(height: 1, color: AppConstants.dividerColor),
-                    _infoRow('Enrollment Samples', '20 per student'),
+                    _infoRow('Enrollment Samples', '${AppConstants.requiredEnrollmentSamples} per student'),
                   ],
                 ),
               ),

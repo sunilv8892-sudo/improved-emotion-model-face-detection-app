@@ -110,8 +110,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     _isProcessing = false;
     _disableBrightnessBoost();
     _controller?.dispose();
-    _faceDetector.dispose();
-    _faceEmbedder.dispose();
+    // NOTE: _faceDetector and _faceEmbedder are app-scoped singletons;
+    // do NOT dispose them here — they are reused across screen instances.
     _overlayTimer?.cancel();
     super.dispose();
   }
@@ -310,11 +310,17 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       final detections = await _detectFaceWithMlKitPath(image.path);
       if (detections.isEmpty) {
         debugPrint('❌ No face detected');
+        // Delete captured temp file before returning
+        try { await File(image.path).delete(); } catch (_) {}
         return;
       }
 
       // Decode image only when detection succeeds
       final bytes = await image.readAsBytes();
+
+      // Delete the temporary picture file to free disk/memory
+      try { await File(image.path).delete(); } catch (_) {}
+
       final rawImage = img.decodeImage(bytes);
       if (rawImage != null) {
         debugPrint('📸 Scanning face: ${rawImage.width}x${rawImage.height}');
