@@ -9,6 +9,8 @@ class DetectedFace {
   final double height;
   final double confidence;
   final String expression;
+  final double? poseX;
+  final double? poseY;
 
   DetectedFace({
     this.id,
@@ -18,6 +20,8 @@ class DetectedFace {
     required this.height,
     required this.confidence,
     this.expression = '',
+    this.poseX,
+    this.poseY,
   });
 
   /// Get bounding box as [x, y, width, height]

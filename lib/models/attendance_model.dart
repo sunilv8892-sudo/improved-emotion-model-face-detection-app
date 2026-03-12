@@ -6,6 +6,7 @@ class AttendanceRecord {
   final String? time;
   final AttendanceStatus status;
   final DateTime recordedAt;
+  final String? emotion;
 
   AttendanceRecord({
     this.id,
@@ -14,6 +15,7 @@ class AttendanceRecord {
     this.time,
     required this.status,
     DateTime? recordedAt,
+    this.emotion,
   }) : recordedAt = recordedAt ?? DateTime.now();
 
   /// Convert to JSON for database storage
@@ -30,6 +32,7 @@ class AttendanceRecord {
               .split('.')[0], // HH:MM:SS
       'status': status.name,
       'recorded_at': recordedAt.toIso8601String(),
+      'emotion': emotion,
     };
   }
 
@@ -45,12 +48,13 @@ class AttendanceRecord {
         orElse: () => AttendanceStatus.present,
       ),
       recordedAt: DateTime.parse(map['recorded_at'] as String),
+      emotion: map['emotion'] as String?,
     );
   }
 
   @override
   String toString() =>
-      'AttendanceRecord(studentId: $studentId, date: $date, status: ${status.name})';
+      'AttendanceRecord(studentId: $studentId, date: $date, status: ${status.name}, emotion: $emotion)';
 }
 
 /// Attendance status enumeration

@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../models/face_detection_model.dart';
 import '../modules/m1_face_detection.dart' as face_detection_module;
+import '../modules/m6_emotion_detection.dart';
 import '../utils/constants.dart';
 
 // ──────────────────────────────────────────────────────────────
@@ -28,13 +29,24 @@ class ExpressionDetectionScreen extends StatefulWidget {
 }
 
 class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
+  static const int _stabilityWindowSize = 3;
+  static const double _minStableConfidence = 0.22;
+  static const double _minStableMargin = 0.01;
+  static const double _holdStableConfidence = 0.18;
+  static const Duration _scanInterval = Duration(milliseconds: 700);
+  static const Duration _minLogInterval = Duration(seconds: 2);
+  static const Duration _stableEmotionHold = Duration(seconds: 2);
+
   CameraController? _controller;
   late face_detection_module.FaceDetectionModule _faceDetector;
+  late EmotionDetectionModule _emotionDetector;
   List<CameraDescription> _availableCameras = [];
   late CameraDescription _currentCamera;
 
   bool _isProcessing = false;
   bool _isScanning = false;
+  bool _emotionModelReady = false;
+  String _pipelineStatusText = 'Loading emotion pipeline...';
 
   // Overlay
   final List<DetectedFace> _overlayFaces = [];
@@ -46,6 +58,12 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
   // Log
   final List<_ExpressionLogEntry> _expressionLog = [];
   static const int _maxLogEntries = 50;
+  final List<_TemporalEmotionSample> _recentEmotionSamples = [];
+  String? _lastLoggedEmotion;
+  DateTime? _lastLoggedAt;
+  String? _lastStableEmotion;
+  double _lastStableConfidence = 0.0;
+  DateTime? _lastStableAt;
 
   // Key used to read camera container size for overlay mapping
   final GlobalKey _cameraKey = GlobalKey();
@@ -62,6 +80,7 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
     _overlayTimer?.cancel();
     _controller?.dispose();
     _faceDetector.dispose();
+    _emotionDetector.dispose();
     super.dispose();
   }
 
@@ -71,6 +90,20 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
     try {
       _faceDetector = face_detection_module.FaceDetectionModule();
       await _faceDetector.initialize();
+
+      // Initialize the paper-style emotion pipeline.
+      _emotionDetector = EmotionDetectionModule();
+      try {
+        await _emotionDetector.initialize();
+        _emotionModelReady = true;
+        _pipelineStatusText = 'Paper emotion pipeline ready';
+        debugPrint('✅ Emotion pipeline loaded');
+      } catch (e) {
+        _emotionModelReady = false;
+        _pipelineStatusText = 'Model unavailable, fallback heuristics active';
+        debugPrint('⚠️ Emotion pipeline not available, using fallback: $e');
+      }
+
       await _initCamera();
       if (mounted) setState(() {});
     } catch (e) {
@@ -102,6 +135,7 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
   Future<void> _startCamera(CameraDescription camera) async {
     try {
       await _controller?.dispose();
+      _resetEmotionHistory();
       _currentCamera = camera;
       _controller = CameraController(
         camera,
@@ -142,6 +176,7 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
 
       final detections = await _detectFaces(bytes);
       if (detections.isEmpty) {
+        _resetEmotionHistory();
         debugPrint('❌ No face detected');
         return;
       }
@@ -153,25 +188,70 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
 
       final validFaces =
           detections.where((f) => f.width >= 60 && f.height >= 60).toList();
-      if (validFaces.isEmpty) return;
+      if (validFaces.isEmpty) {
+        _resetEmotionHistory();
+        return;
+      }
+
+      if (validFaces.length != 1) {
+        _resetEmotionHistory();
+      }
 
       _overlayFaces.clear();
       _overlayExpressions.clear();
       _overlayColors.clear();
 
       for (final face in validFaces) {
-        final expr = face.expression.isNotEmpty ? face.expression : 'Neutral';
-        _overlayFaces.add(face);
-        _overlayExpressions.add(expr);
-        _overlayColors.add(_colorForExpression(expr));
+        String expr = 'Neutral';
+        double confidence = 0.0;
 
-        _expressionLog.insert(
-          0,
-          _ExpressionLogEntry(expression: expr, timestamp: DateTime.now()),
-        );
-        if (_expressionLog.length > _maxLogEntries) {
-          _expressionLog.removeLast();
+        try {
+          // Crop face ROI from the full image for emotion detection
+          final int fx = face.x.round().clamp(0, rawImage.width - 1);
+          final int fy = face.y.round().clamp(0, rawImage.height - 1);
+          final int fw =
+              face.width.round().clamp(1, rawImage.width - fx);
+          final int fh =
+              face.height.round().clamp(1, rawImage.height - fy);
+          final faceROI =
+              img.copyCrop(rawImage, x: fx, y: fy, width: fw, height: fh);
+          final faceBytes = Uint8List.fromList(img.encodeJpg(faceROI));
+
+          final emotionResult =
+              await _emotionDetector.detectEmotionWithFallback(
+            faceBytes,
+            poseX: face.poseX ?? 0.0,
+            poseY: face.poseY ?? 0.0,
+            );
+          final decision = validFaces.length == 1
+              ? _stabilizeEmotion(emotionResult)
+              : _rawDecision(emotionResult);
+          expr = decision.label;
+          confidence = decision.confidence;
+          _pipelineStatusText = decision.statusText;
+          // Debug: print top-3 raw probabilities
+          final sortedProbs = emotionResult.probabilities.entries.toList()
+            ..sort((a, b) => b.value.compareTo(a.value));
+          final top3 = sortedProbs.take(3).map((e) => '${e.key}:${(e.value * 100).toStringAsFixed(1)}%').join(' ');
+          debugPrint(
+              '🎭 Emotion: $expr (${(confidence * 100).toStringAsFixed(1)}%) '
+              'top3=[$top3] '
+              '${emotionResult.isFallback ? "[fallback]" : "[SVM pipeline]"}');
+
+          if (decision.accepted) {
+            _appendStableEmotionLog(decision.label);
+          }
+        } catch (e) {
+          expr = 'Analyzing';
+          confidence = 0.0;
+          _pipelineStatusText = 'Emotion inference failed, using neutral fallback';
+          debugPrint('⚠️ Emotion detection failed, using Neutral fallback: $e');
         }
+
+        _overlayFaces.add(face);
+        _overlayExpressions
+            .add(confidence > 0 ? '$expr ${(confidence * 100).toStringAsFixed(0)}%' : expr);
+        _overlayColors.add(_colorForExpression(expr));
       }
 
       _overlayTimer?.cancel();
@@ -201,7 +281,7 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
     try {
       while (_isScanning) {
         if (!_isProcessing) await _scanExpression();
-        await Future.delayed(const Duration(milliseconds: 500));
+        await Future.delayed(_scanInterval);
       }
     } finally {
       _isScanning = false;
@@ -211,6 +291,7 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
 
   void _stopScanning() {
     _isScanning = false;
+    _resetEmotionHistory();
     if (mounted) setState(() {});
   }
 
@@ -227,6 +308,8 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
                 height: f.boundingBox.height.toDouble(),
                 confidence: 1.0,
                 expression: f.expression,
+                poseX: f.headEulerAngleY,
+                poseY: f.headEulerAngleZ,
               ))
           .toList();
     } catch (e) {
@@ -238,38 +321,62 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
   // ─────────────────── Helpers ──────────────────────────────
 
   Color _colorForExpression(String expr) {
+    // FER-2013 seven-class emotion labels
     switch (expr) {
+      case 'Analyzing':
+        return const Color(0xFF9E9E9E);
+      case 'Angry':
+        return const Color(0xFFF44336); // Red
+      case 'Disgust':
+        return const Color(0xFF795548); // Brown
+      case 'Fear':
+        return const Color(0xFF9C27B0); // Purple
       case 'Happy':
-        return const Color(0xFF4CAF50);
+        return const Color(0xFF4CAF50); // Green
+      case 'Sad':
+        return const Color(0xFF2196F3); // Blue
+      case 'Surprise':
+        return const Color(0xFFFF9800); // Orange
+      case 'Neutral':
+        return const Color(0xFF607D8B); // Blue-grey
+      // Legacy ML Kit labels (fallback)
       case 'Smiling':
         return const Color(0xFF8BC34A);
-      case 'Neutral':
-        return const Color(0xFF2196F3);
       case 'Serious':
-        return const Color(0xFF607D8B);
-      case 'Sad':
-        return const Color(0xFF9C27B0);
+        return const Color(0xFF455A64);
       case 'Winking':
-        return const Color(0xFFFF9800);
+        return const Color(0xFFFFEB3B);
       case 'Eyes Closed':
-        return const Color(0xFF795548);
+        return const Color(0xFF9E9E9E);
       default:
         return const Color(0xFF9E9E9E);
     }
   }
 
   IconData _iconForExpression(String expr) {
+    // FER-2013 seven-class emotion labels
     switch (expr) {
+      case 'Analyzing':
+        return Icons.hourglass_top_rounded;
+      case 'Angry':
+        return Icons.sentiment_very_dissatisfied;
+      case 'Disgust':
+        return Icons.sick;
+      case 'Fear':
+        return Icons.psychology_alt;
       case 'Happy':
         return Icons.sentiment_very_satisfied;
-      case 'Smiling':
-        return Icons.sentiment_satisfied;
+      case 'Sad':
+        return Icons.sentiment_dissatisfied;
+      case 'Surprise':
+        return Icons.emoji_emotions;
       case 'Neutral':
         return Icons.sentiment_neutral;
+      // Legacy ML Kit labels (fallback)
+      case 'Smiling':
+        return Icons.sentiment_satisfied;
       case 'Serious':
-        return Icons.sentiment_dissatisfied;
-      case 'Sad':
-        return Icons.sentiment_very_dissatisfied;
+        return Icons.face;
       case 'Winking':
         return Icons.face_retouching_natural;
       case 'Eyes Closed':
@@ -286,6 +393,139 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
   Size _getCameraDisplaySize() {
     final rb = _cameraKey.currentContext?.findRenderObject() as RenderBox?;
     return rb?.size ?? Size.zero;
+  }
+
+  _EmotionDisplayDecision _rawDecision(EmotionDetectionResult result) {
+    return _EmotionDisplayDecision(
+      label: result.label,
+      confidence: result.confidence,
+      accepted: result.confidence >= _minStableConfidence,
+      statusText: result.isFallback
+          ? 'Fallback heuristics active'
+          : 'Paper emotion pipeline active',
+    );
+  }
+
+  _EmotionDisplayDecision _stabilizeEmotion(EmotionDetectionResult result) {
+    final now = DateTime.now();
+    _recentEmotionSamples.add(
+      _TemporalEmotionSample(
+        probabilities: Map<String, double>.from(result.probabilities),
+        rawLabel: result.label,
+        confidence: result.confidence,
+        isFallback: result.isFallback,
+      ),
+    );
+
+    if (_recentEmotionSamples.length > _stabilityWindowSize) {
+      _recentEmotionSamples.removeAt(0);
+    }
+
+    final aggregate = <String, double>{};
+    double totalWeight = 0.0;
+    for (int index = 0; index < _recentEmotionSamples.length; index++) {
+      final sample = _recentEmotionSamples[index];
+      final weight = (index + 1) * max(sample.confidence, 0.35);
+      totalWeight += weight;
+      sample.probabilities.forEach((label, probability) {
+        aggregate[label] = (aggregate[label] ?? 0.0) + probability * weight;
+      });
+    }
+
+    if (totalWeight <= 0.0 || aggregate.isEmpty) {
+      return const _EmotionDisplayDecision(
+        label: 'Analyzing',
+        confidence: 0.0,
+        accepted: false,
+        statusText: 'Collecting frames for a stable emotion',
+      );
+    }
+
+    final normalized = aggregate.map(
+      (label, value) => MapEntry(label, value / totalWeight),
+    );
+    final ranked = normalized.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final best = ranked.first;
+    final second = ranked.length > 1 ? ranked[1] : const MapEntry('', 0.0);
+    final margin = best.value - second.value;
+    final consensusCount = _recentEmotionSamples
+        .where((sample) => sample.rawLabel == best.key)
+        .length;
+    final minConsensus = 1;
+    final accepted = _recentEmotionSamples.length >= 1 &&
+        best.value >= _minStableConfidence &&
+        margin >= _minStableMargin &&
+        consensusCount >= minConsensus;
+
+    if (!accepted) {
+      if (_lastStableEmotion != null &&
+          _lastStableAt != null &&
+          now.difference(_lastStableAt!) <= _stableEmotionHold &&
+          best.value >= _holdStableConfidence) {
+        return _EmotionDisplayDecision(
+          label: _lastStableEmotion!,
+          confidence: _lastStableConfidence,
+          accepted: false,
+          statusText: result.isFallback
+              ? 'Holding last stable fallback emotion'
+              : 'Holding last stable emotion',
+        );
+      }
+
+      return _EmotionDisplayDecision(
+        label: 'Analyzing',
+        confidence: best.value,
+        accepted: false,
+        statusText: result.isFallback
+            ? 'Fallback active, confidence too low'
+            : 'Model active, waiting for stable consensus',
+      );
+    }
+
+    _lastStableEmotion = best.key;
+    _lastStableConfidence = best.value;
+    _lastStableAt = now;
+
+    return _EmotionDisplayDecision(
+      label: best.key,
+      confidence: best.value,
+      accepted: true,
+      statusText: result.isFallback
+          ? 'Fallback heuristics active'
+          : 'Paper emotion pipeline stabilized',
+    );
+  }
+
+  void _appendStableEmotionLog(String emotion) {
+    final now = DateTime.now();
+    _lastStableEmotion = emotion;
+    _lastStableAt = now;
+    if (_lastLoggedEmotion == emotion &&
+        _lastLoggedAt != null &&
+        now.difference(_lastLoggedAt!) < _minLogInterval) {
+      return;
+    }
+
+    _lastLoggedEmotion = emotion;
+    _lastLoggedAt = now;
+    _expressionLog.insert(
+      0,
+      _ExpressionLogEntry(expression: emotion, timestamp: now),
+    );
+    if (_expressionLog.length > _maxLogEntries) {
+      _expressionLog.removeLast();
+    }
+  }
+
+  void _resetEmotionHistory() {
+    _recentEmotionSamples.clear();
+    _lastLoggedEmotion = null;
+    _lastLoggedAt = null;
+    _lastStableEmotion = null;
+    _lastStableConfidence = 0.0;
+    _lastStableAt = null;
   }
 
   Widget _buildFaceOverlay() {
@@ -357,7 +597,7 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(_iconForExpression(expr),
+                        Icon(_iconForExpression(expr.split(' ').first),
                             color: Colors.white, size: 14),
                         const SizedBox(width: 4),
                         Text(
@@ -394,7 +634,7 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Expression Detection'),
+        title: const Text('Emotion AI'),
         elevation: 0,
         flexibleSpace: Container(
           decoration: BoxDecoration(gradient: AppConstants.blueGradient),
@@ -565,26 +805,77 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
                                   BorderSide(color: AppConstants.cardBorder),
                             ),
                           ),
-                          child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.history,
-                                  size: 16,
-                                  color: AppConstants.primaryColor),
-                              const SizedBox(width: 8),
-                              const Text(
-                                'Expression Log',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                  color: AppConstants.textPrimary,
-                                ),
+                              Row(
+                                children: [
+                                  Icon(Icons.history,
+                                      size: 16,
+                                      color: AppConstants.primaryColor),
+                                  const SizedBox(width: 8),
+                                  const Text(
+                                    'Emotion Log',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      color: AppConstants.textPrimary,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    '${_expressionLog.length} detected',
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AppConstants.textTertiary,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const Spacer(),
-                              Text(
-                                '${_expressionLog.length} detected',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: AppConstants.textTertiary,
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: (_emotionModelReady
+                                          ? AppConstants.successColor
+                                          : AppConstants.warningColor)
+                                      .withAlpha(25),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: _emotionModelReady
+                                        ? AppConstants.successColor.withAlpha(90)
+                                        : AppConstants.warningColor.withAlpha(90),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      _emotionModelReady
+                                          ? Icons.model_training
+                                          : Icons.warning_amber_rounded,
+                                      size: 14,
+                                      color: _emotionModelReady
+                                          ? AppConstants.successColor
+                                          : AppConstants.warningColor,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        _pipelineStatusText,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          color: _emotionModelReady
+                                              ? AppConstants.successColor
+                                              : AppConstants.warningColor,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
@@ -602,7 +893,7 @@ class _ExpressionDetectionScreenState extends State<ExpressionDetectionScreen> {
                                           color: AppConstants.textTertiary),
                                       SizedBox(height: 8),
                                       Text(
-                                        'Start scanning to detect expressions',
+                                        'Start scanning to detect emotions',
                                         style: TextStyle(
                                           color: AppConstants.textSecondary,
                                           fontSize: 13,
@@ -696,4 +987,32 @@ class _ExpressionLogEntry {
   final String expression;
   final DateTime timestamp;
   _ExpressionLogEntry({required this.expression, required this.timestamp});
+}
+
+class _TemporalEmotionSample {
+  final Map<String, double> probabilities;
+  final String rawLabel;
+  final double confidence;
+  final bool isFallback;
+
+  const _TemporalEmotionSample({
+    required this.probabilities,
+    required this.rawLabel,
+    required this.confidence,
+    required this.isFallback,
+  });
+}
+
+class _EmotionDisplayDecision {
+  final String label;
+  final double confidence;
+  final bool accepted;
+  final String statusText;
+
+  const _EmotionDisplayDecision({
+    required this.label,
+    required this.confidence,
+    required this.accepted,
+    required this.statusText,
+  });
 }

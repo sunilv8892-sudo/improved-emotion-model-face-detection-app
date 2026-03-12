@@ -19,8 +19,10 @@ import '../models/attendance_model.dart';
 import '../models/subject_model.dart';
 import '../modules/m1_face_detection.dart' as face_detection_module;
 import '../modules/m2_face_embedding.dart';
+import '../modules/m6_emotion_detection.dart';
 import '../utils/constants.dart';
 import '../widgets/animated_background.dart';
+import 'dart:typed_data';
 
 class _KnnSample {
   final int studentId;
@@ -91,12 +93,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   final List<DetectedFace> _overlayFaces = [];
   final List<String> _overlayNames = [];
   final List<Color> _overlayColors = [];
-  final List<String> _overlayExpressions = [];
+  final List<String> _overlayEmotions = [];
   Size? _imageSize;
   Timer? _overlayTimer;
 
-  // Expression tracking per student
-  final Map<int, String> _studentExpressions = {};
+  // Emotion detection
+  late EmotionDetectionModule _emotionDetector;
+  bool _emotionModelReady = false;
+  final Map<int, String> _studentEmotions = {}; // studentId -> emotion at mark time
 
   @override
   void initState() {
@@ -135,6 +139,17 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
       _faceEmbedder = FaceEmbeddingModule();
       await _faceEmbedder.initialize();
+
+      // Initialize emotion detection pipeline
+      _emotionDetector = EmotionDetectionModule();
+      try {
+        await _emotionDetector.initialize();
+        _emotionModelReady = true;
+        debugPrint('✅ Emotion pipeline loaded for attendance');
+      } catch (e) {
+        _emotionModelReady = false;
+        debugPrint('⚠️ Emotion pipeline not available: $e');
+      }
 
       // Load enrolled students and their embeddings
       _enrolledStudents = await _dbManager.getAllStudents();
@@ -344,7 +359,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         _overlayFaces.clear();
         _overlayNames.clear();
         _overlayColors.clear();
-        _overlayExpressions.clear();
+        _overlayEmotions.clear();
         final seenInCurrentScan = <int>{};
         final countedInCurrentScan = <int>{};
 
@@ -354,13 +369,34 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           final croppedFace = _cropFace(rawImage, face);
           final embedding = await _generateEmbedding(croppedFace);
 
+          // Detect emotion from cropped face
+          String currentEmotion = '';
+          if (_emotionModelReady) {
+            try {
+              final faceROI = img.copyCrop(rawImage,
+                  x: face.x.round().clamp(0, rawImage.width - 1),
+                  y: face.y.round().clamp(0, rawImage.height - 1),
+                  width: face.width.round().clamp(1, rawImage.width - face.x.round().clamp(0, rawImage.width - 1)),
+                  height: face.height.round().clamp(1, rawImage.height - face.y.round().clamp(0, rawImage.height - 1)));
+              final faceBytes = Uint8List.fromList(img.encodeJpg(faceROI));
+              final emotionResult = await _emotionDetector.detectEmotionWithFallback(
+                faceBytes,
+                poseX: face.poseX ?? 0.0,
+                poseY: face.poseY ?? 0.0,
+              );
+              currentEmotion = emotionResult.label;
+            } catch (e) {
+              debugPrint('⚠️ Emotion detection failed: $e');
+            }
+          }
+
           if (embedding.isEmpty) {
             debugPrint('❌ Failed to generate embedding for face');
             // No embedding, show unknown
             _overlayFaces.add(face);
             _overlayNames.add('Unknown');
             _overlayColors.add(Colors.red);
-            _overlayExpressions.add('');
+            _overlayEmotions.add(currentEmotion);
             continue;
           }
 
@@ -392,20 +428,28 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               final lastTime = _lastDetectionTime[studentId] ?? DateTime(2000);
 
               if (now.difference(lastTime) >= _detectionCooldown) {
-                debugPrint('✅ ${match.name} marked present (confirmed)');
+                debugPrint('✅ ${match.name} marked present (confirmed) emotion=$currentEmotion');
                 _lastDetectionTime[studentId] = now;
                 _consecutiveDetectionsMap[studentId] = 0;
+
+                // Store the detected emotion for this student
+                if (currentEmotion.isNotEmpty) {
+                  _studentEmotions[studentId] = currentEmotion;
+                }
 
                 if (mounted) {
                   setState(() {
                     _attendanceStatus[studentId] = AttendanceStatus.present;
-                    _studentExpressions[studentId] = face.expression;
                   });
+                  final formattedTime = _formatAttendanceTime(now);
+                  final emotionText = currentEmotion.isNotEmpty ? ' | $currentEmotion' : '';
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('✅ ${match.name} marked present'),
+                      content: Text(
+                        '${match.name} | $formattedTime | Attendance Marked$emotionText',
+                      ),
                       backgroundColor: Colors.green,
-                      duration: const Duration(milliseconds: 800),
+                      duration: const Duration(seconds: 1),
                     ),
                   );
                   // Speak the attendance confirmation
@@ -416,27 +460,27 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 _overlayFaces.add(face);
                 _overlayNames.add(match.name);
                 _overlayColors.add(Colors.green);
-                _overlayExpressions.add(face.expression);
+                _overlayEmotions.add(currentEmotion);
               } else {
                 // Cooldown not met, show name with pending
                 _overlayFaces.add(face);
                 _overlayNames.add(match.name);
                 _overlayColors.add(Colors.orange);
-                _overlayExpressions.add(face.expression);
+                _overlayEmotions.add(currentEmotion);
               }
             } else {
               // Not enough consecutive yet, show name being detected
               _overlayFaces.add(face);
               _overlayNames.add(match.name);
               _overlayColors.add(Colors.orange);
-              _overlayExpressions.add(face.expression);
+              _overlayEmotions.add(currentEmotion);
             }
           } else {
             // No match, show unknown
             _overlayFaces.add(face);
             _overlayNames.add('Unknown');
             _overlayColors.add(Colors.red);
-            _overlayExpressions.add(face.expression);
+            _overlayEmotions.add(currentEmotion);
           }
         }
 
@@ -453,7 +497,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               _overlayFaces.clear();
               _overlayNames.clear();
               _overlayColors.clear();
-              _overlayExpressions.clear();
+              _overlayEmotions.clear();
             });
           }
         });
@@ -509,6 +553,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               height: face.boundingBox.height.toDouble(),
               confidence: 1.0,
               expression: face.expression,
+              poseX: face.headEulerAngleY,
+              poseY: face.headEulerAngleZ,
             ),
           )
           .toList();
@@ -537,6 +583,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       debugPrint('Embedding generation error: $e');
       return [];
     }
+  }
+
+  String _formatAttendanceTime(DateTime timestamp) {
+    final hour = timestamp.hour.toString().padLeft(2, '0');
+    final minute = timestamp.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
   }
 
   Future<void> _speakAttendanceConfirmation(String studentName) async {
@@ -761,6 +813,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             time: '${DateTime.now().hour}:${DateTime.now().minute}',
             status: entry.value,
             recordedAt: DateTime.now(),
+            emotion: _studentEmotions[entry.key],
           ),
         );
         submitted++;
@@ -921,13 +974,13 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     }
 
     final presentNames = <String>[];
-    final presentExpressions = <String>[];
+    final presentEmotions = <String>[];
     final absentNames = <String>[];
     for (final entry in studentMap.entries) {
       final status = _attendanceStatus[entry.key] ?? AttendanceStatus.absent;
       if (status == AttendanceStatus.present) {
         presentNames.add(entry.value.name);
-        presentExpressions.add(_studentExpressions[entry.key] ?? '');
+        presentEmotions.add(_studentEmotions[entry.key] ?? '');
       } else {
         absentNames.add(entry.value.name);
       }
@@ -944,15 +997,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     buf.writeln('"Attendees = ${presentNames.length}, Absentees = ${absentNames.length}, Total = ${studentMap.length}"');
     buf.writeln('');
 
-    // Header row: Absentees, Attendees, Expression (absentees first)
-    buf.writeln('Absentees,Attendees,Expression');
-    // Now list names side-by-side under Absentees and Attendees columns,
-    // with the Expression column aligned to the Attendees row.
+    // Header row: Absentees, Attendees, Emotion (absentees first)
+    buf.writeln('Absentees,Attendees,Emotion');
+    // Now list names side-by-side under Absentees and Attendees columns.
     final maxLen = presentNames.length > absentNames.length ? presentNames.length : absentNames.length;
     for (int i = 0; i < maxLen; i++) {
       final a = i < absentNames.length ? absentNames[i] : '';
       final p = i < presentNames.length ? presentNames[i] : '';
-      final e = i < presentExpressions.length ? presentExpressions[i] : '';
+      final e = i < presentEmotions.length ? presentEmotions[i] : '';
       buf.writeln('"$a","$p","$e"');
     }
 
@@ -1077,6 +1129,18 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     }
   }
 
+  String _emotionEmoji(String emotion) {
+    const emojis = {
+      'Happy': '😊 Happy',
+      'Sad': '😢 Sad',
+      'Angry': '😠 Angry',
+      'Surprise': '😲 Surprise',
+      'Disgust': '🤢 Disgust',
+      'Neutral': '😐 Neutral',
+    };
+    return emojis[emotion] ?? emotion;
+  }
+
   Widget _buildFaceOverlay(Size displaySize) {
     if (_overlayFaces.isEmpty) return const SizedBox.shrink();
 
@@ -1085,7 +1149,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         final face = _overlayFaces[index];
         final name = _overlayNames[index];
         final color = _overlayColors[index];
-        final expr = index < _overlayExpressions.length ? _overlayExpressions[index] : '';
+        final emotion = index < _overlayEmotions.length ? _overlayEmotions[index] : '';
 
         // ── Coordinate mapping overview ──
         // takePicture() returns a JPEG that is already rotation-corrected (EXIF
@@ -1160,7 +1224,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   border: Border.all(color: color, width: 3),
                 ),
               ),
-              // Name + expression label above the circle
+              // Name label above the circle
               Positioned(
                 top: -30,
                 left: -20,
@@ -1172,34 +1236,43 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                       color: color.withAlpha(179),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          name,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textAlign: TextAlign.center,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (expr.isNotEmpty)
-                          Text(
-                            expr,
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w500,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                      ],
+                    child: Text(
+                      name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ),
               ),
+              // Emotion label below the circle
+              if (emotion.isNotEmpty)
+                Positioned(
+                  bottom: -26,
+                  left: -20,
+                  right: -20,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withAlpha(160),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        _emotionEmoji(emotion),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         );
@@ -1544,7 +1617,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                             final status = _attendanceStatus[student.id];
                             final isPresent =
                                 status == AttendanceStatus.present;
-                            final studentExpr = _studentExpressions[student.id] ?? '';
                             final initials = student.name
                                 .split(' ')
                                 .where((s) => s.isNotEmpty)
@@ -1624,25 +1696,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                                                   ),
                                                 ),
                                               ),
-                                              if (isPresent && studentExpr.isNotEmpty) ...[
-                                                const SizedBox(width: 6),
-                                                Container(
-                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                  decoration: BoxDecoration(
-                                                    color: AppConstants.primaryColor.withAlpha(20),
-                                                    borderRadius: BorderRadius.circular(8),
-                                                    border: Border.all(color: AppConstants.primaryColor.withAlpha(60)),
-                                                  ),
-                                                  child: Text(
-                                                    studentExpr,
-                                                    style: TextStyle(
-                                                      fontSize: 10,
-                                                      fontWeight: FontWeight.w600,
-                                                      color: AppConstants.primaryColor,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ],
                                             ],
                                           ),
                                           const SizedBox(height: 4),

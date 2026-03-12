@@ -212,6 +212,7 @@ class DatabaseManager {
       'time': attendance.time,
       'status': attendance.status.name,
       'recordedAt': attendance.recordedAt.toIso8601String(),
+      'emotion': attendance.emotion,
     };
     jsonList.add(jsonEncode(record));
     await prefs.setStringList('attendance', jsonList);
@@ -237,6 +238,7 @@ class DatabaseManager {
               orElse: () => model.AttendanceStatus.absent,
             ),
             recordedAt: _parseDate(m['recordedAt'] as String?),
+            emotion: m['emotion'] as String?,
           ),
         )
         .toList();
@@ -268,6 +270,7 @@ class DatabaseManager {
               orElse: () => model.AttendanceStatus.absent,
             ),
             recordedAt: _parseDate(m['recordedAt'] as String?),
+            emotion: m['emotion'] as String?,
           ),
         )
         .toList();
@@ -353,6 +356,7 @@ class DatabaseManager {
               orElse: () => model.AttendanceStatus.absent,
             ),
             recordedAt: _parseDate(m['recordedAt'] as String?),
+            emotion: m['emotion'] as String?,
           ),
         )
         .toList();

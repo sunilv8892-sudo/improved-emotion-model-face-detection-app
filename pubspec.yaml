@@ -33,10 +33,10 @@ dependencies:
 
   cupertino_icons: ^1.0.8
   camera: ^0.11.0+1
-  # MediaPipe-based face detection via Google ML Kit
+  # Keep the original working ML Kit setup for face detection.
   google_ml_kit: ^0.18.0
   permission_handler: ^11.3.1
-  tflite_flutter: ^0.11.0
+  tflite_flutter: ^0.12.1
   image: ^4.0.0
   shared_preferences: ^2.2.0
   flutter_tts: ^4.2.5

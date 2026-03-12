@@ -1,0 +1,35 @@
+﻿Grid search for better Neutral recall:
+--------------------------------------------------------------------------------
+C=  5 g=scale acc=0.804 Neutral=0.73 | Ang:0.84 Dis:0.88 Hap:0.82 Neu:0.73 Sad:0.65 Sur:0.91
+C=  5 g= 0.05 acc=0.803 Neutral=0.73 | Ang:0.84 Dis:0.89 Hap:0.82 Neu:0.73 Sad:0.65 Sur:0.91
+C=  5 g=  0.1 acc=0.809 Neutral=0.74 | Ang:0.84 Dis:0.88 Hap:0.84 Neu:0.74 Sad:0.65 Sur:0.91
+C=  5 g=  0.2 acc=0.801 Neutral=0.74 | Ang:0.82 Dis:0.87 Hap:0.83 Neu:0.74 Sad:0.65 Sur:0.91
+C=  5 g=  0.5 acc=0.778 Neutral=0.71 | Ang:0.81 Dis:0.81 Hap:0.82 Neu:0.71 Sad:0.63 Sur:0.89
+C=  5 g=  1.0 acc=0.723 Neutral=0.65 | Ang:0.81 Dis:0.73 Hap:0.75 Neu:0.65 Sad:0.60 Sur:0.79
+C= 10 g=scale acc=0.806 Neutral=0.73 | Ang:0.84 Dis:0.89 Hap:0.83 Neu:0.73 Sad:0.66 Sur:0.91
+C= 10 g= 0.05 acc=0.804 Neutral=0.73 | Ang:0.84 Dis:0.89 Hap:0.83 Neu:0.73 Sad:0.64 Sur:0.91
+C= 10 g=  0.1 acc=0.809 Neutral=0.75 | Ang:0.83 Dis:0.88 Hap:0.84 Neu:0.75 Sad:0.66 Sur:0.91
+C= 10 g=  0.2 acc=0.798 Neutral=0.74 | Ang:0.82 Dis:0.87 Hap:0.82 Neu:0.74 Sad:0.66 Sur:0.89
+C= 10 g=  0.5 acc=0.768 Neutral=0.71 | Ang:0.78 Dis:0.81 Hap:0.82 Neu:0.71 Sad:0.63 Sur:0.88
+C= 10 g=  1.0 acc=0.713 Neutral=0.63 | Ang:0.81 Dis:0.72 Hap:0.74 Neu:0.63 Sad:0.60 Sur:0.79
+C= 15 g=scale acc=0.809 Neutral=0.74 | Ang:0.84 Dis:0.89 Hap:0.84 Neu:0.74 Sad:0.66 Sur:0.91
+C= 15 g= 0.05 acc=0.803 Neutral=0.73 | Ang:0.83 Dis:0.89 Hap:0.83 Neu:0.73 Sad:0.65 Sur:0.91
+C= 15 g=  0.1 acc=0.806 Neutral=0.76 | Ang:0.83 Dis:0.87 Hap:0.83 Neu:0.76 Sad:0.66 Sur:0.91
+C= 15 g=  0.2 acc=0.797 Neutral=0.75 | Ang:0.81 Dis:0.86 Hap:0.82 Neu:0.75 Sad:0.64 Sur:0.90
+C= 15 g=  0.5 acc=0.766 Neutral=0.70 | Ang:0.78 Dis:0.79 Hap:0.82 Neu:0.70 Sad:0.63 Sur:0.88
+C= 15 g=  1.0 acc=0.713 Neutral=0.63 | Ang:0.80 Dis:0.72 Hap:0.75 Neu:0.63 Sad:0.59 Sur:0.79
+C= 20 g=scale acc=0.808 Neutral=0.74 | Ang:0.84 Dis:0.89 Hap:0.83 Neu:0.74 Sad:0.64 Sur:0.91
+C= 20 g= 0.05 acc=0.806 Neutral=0.73 | Ang:0.84 Dis:0.89 Hap:0.83 Neu:0.73 Sad:0.65 Sur:0.91
+C= 20 g=  0.1 acc=0.803 Neutral=0.76 | Ang:0.82 Dis:0.87 Hap:0.82 Neu:0.76 Sad:0.65 Sur:0.91
+C= 20 g=  0.2 acc=0.795 Neutral=0.74 | Ang:0.82 Dis:0.87 Hap:0.82 Neu:0.74 Sad:0.64 Sur:0.90
+C= 20 g=  0.5 acc=0.755 Neutral=0.68 | Ang:0.78 Dis:0.79 Hap:0.80 Neu:0.68 Sad:0.63 Sur:0.88
+C= 20 g=  1.0 acc=0.713 Neutral=0.62 | Ang:0.80 Dis:0.72 Hap:0.75 Neu:0.62 Sad:0.60 Sur:0.79
+C= 50 g=scale acc=0.808 Neutral=0.76 | Ang:0.84 Dis:0.88 Hap:0.83 Neu:0.76 Sad:0.65 Sur:0.91
+C= 50 g= 0.05 acc=0.811 Neutral=0.75 | Ang:0.85 Dis:0.88 Hap:0.83 Neu:0.75 Sad:0.65 Sur:0.91
+C= 50 g=  0.1 acc=0.804 Neutral=0.76 | Ang:0.82 Dis:0.88 Hap:0.82 Neu:0.76 Sad:0.65 Sur:0.91
+C= 50 g=  0.2 acc=0.786 Neutral=0.73 | Ang:0.80 Dis:0.87 Hap:0.81 Neu:0.73 Sad:0.63 Sur:0.89
+C= 50 g=  0.5 acc=0.749 Neutral=0.66 | Ang:0.76 Dis:0.79 Hap:0.79 Neu:0.66 Sad:0.63 Sur:0.87
+C= 50 g=  1.0 acc=0.707 Neutral=0.61 | Ang:0.79 Dis:0.72 Hap:0.75 Neu:0.61 Sad:0.58 Sur:0.79
+
+Best for Neutral: C=15 gamma=0.1 acc=0.806 Neutral=0.76
+All recalls: {'Angry': np.float64(0.8299319727891157), 'Disgust': np.float64(0.8654545454545455), 'Happy': np.float64(0.8305084745762712), 'Neutral': np.float64(0.7570422535211268), 'Sad': np.float64(0.6554307116104869), 'Surprise': np.float64(0.9094827586206896)}
